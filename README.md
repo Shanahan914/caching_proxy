@@ -3,7 +3,7 @@
 ## Overview
 This Flask application acts as a cli caching proxy that forwards requests to an external API while caching responses for efficient data retrieval. 
 
-A simple proof of concept for simple url patterns (/url/<id>).
+A simple proof of concept for simple url patterns. The next version should include filtering and pagination. 
 
 This is a solution to the roadmap.sh project caching-proxy https://roadmap.sh/projects/caching-server
 
