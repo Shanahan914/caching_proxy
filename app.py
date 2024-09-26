@@ -11,7 +11,7 @@ app = Flask(__name__)
 
 #-initialising redis for cache
 r = redis.Redis(host='localhost', port=6379, db=0)
-EXPIRY = 60 # 1 hour
+EXPIRY = 60*60 # 1 hour
 
 
 #-initialising urrllib
@@ -24,19 +24,25 @@ parser = argparse.ArgumentParser(
     prog='cache-proxy',
     description='a cli interface for a cache proxy'
 )
-parser.add_argument('port')
-parser.add_argument('origin')
+parser.add_argument('--port', default=3000)
+parser.add_argument('--origin', default='http://dummyjson.com')
+parser.add_argument('--clear', default=None)
 
 #readig cli args
 args = parser.parse_args()
 port = args.port
 origin = args.origin
+clear_arg = args.clear
 
 
-#clear cache
-# TODO need to make it either port = 'clear' or port AND origin is needed
-if port == 'clear':
-    print('cache cleared')
+#clear cache by removing all keys
+if clear_arg =='cache':
+    try:
+        r.flushdb()
+        print('------cache cleared-------')
+    except redis.RedisError as redis_error:
+        logging.error(f"redis error: {redis_error}")
+        print('problem clearing the cache')
 
 
 # helper functions
@@ -54,9 +60,9 @@ def get_from_cache(data):
     )
     
 #attempts to retreive data from external api
-def get_from_origin(method, url,data="", ):
+def get_from_origin(method, url,data=None):
     try:
-        return http.request(method, url, body=json.dumps(data), headers={"Content-Type": "application/json"})
+        return http.request(method, url, body=data, headers={"Content-Type": "application/json"})
     except urllib3.exceptions.HTTPError as e:
         logging.error(f"HTTP error occurred: {e}")
         return jsonify({ "msg: : "f"HTTP error occurred: {e}"}), 400
@@ -148,22 +154,42 @@ def get_single_post(url,id):
 
 #   PUT, PATCH, DELETE     /url /id       NOT CACHED
 #-------------------------------#
-
-#PUT, PATCH, DELETE -> forward all requests, no cache
-@app.route("/<url>/<id>", methods=['PUT', 'PATCH', 'DELETE'])
-def forward_methods(url, id):
-    print(type(request.data))
+@app.route('/<url>', methods=['POST'])
+def post_item(url):
     data =json.loads(request.data.decode('utf-8'))
-    print(data, type(data))
+
     #set external url
-    proxy_url = f"{origin}/{url}/{id}"
+    proxy_url = f"{origin}/{url}"
+
     #try fetching the data
-    external_response = get_from_origin(request.method, proxy_url, data)
+    external_response = get_from_origin(request.method, proxy_url, json.dumps(data))
 
     #return the response from the server
     if external_response.status >= 500:
         return jsonify({'msg':'server error'}), external_response.status
-    
+    if external_response not in [200, 201, 204]:
+        return jsonify({'msg': 'post request was not succesful'}), external_response.status
+
+    return response_cache_miss(external_response, external_response.status)
+
+
+
+#PUT, PATCH, DELETE -> forward all requests, no cache
+@app.route("/<url>/<id>", methods=['PUT', 'PATCH', 'DELETE'])
+def forward_methods(url, id):
+    data =json.loads(request.data.decode('utf-8'))
+
+    #set external url
+    proxy_url = f"{origin}/{url}/{id}"
+
+    #try fetching the data
+    external_response = get_from_origin(request.method, proxy_url, json.dumps(data))
+
+    #return the response from the server
+    if external_response.status >= 500:
+        return jsonify({'msg':'server error'}), external_response.status
+    if external_response not in [200, 201, 204]:
+        return jsonify({'msg': 'request was not succesful'}), external_response.status
     return response_cache_miss(external_response, external_response.status)
 
 if __name__ == '__main__':
